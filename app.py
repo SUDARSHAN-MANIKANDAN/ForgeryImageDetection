@@ -7,12 +7,26 @@ from detector import detect_copy_move, readImage
 IMG_WIDTH = 400
 IMG_HEIGHT = 400
 
-# Function to return an image as a PhotoImage object given its path
-def getImage(path, width, height):
-    img = Image.open(path)
-    img = img.resize((width, height), Image.ANTIALIAS)
 
-    return ImageTk.PhotoImage(img)
+def getImage(path, width, height):
+    """
+    Load an image, resize it with modern Pillow resampling, ensure RGB,
+    and return a Tk-compatible PhotoImage.
+    """
+    img = Image.open(path)
+
+    # Ensure RGB (Tk dislikes RGBA/P for some operations)
+    if img.mode in ("RGBA", "P"):
+        img = img.convert("RGB")
+
+    # Fix for new Pillow — Image.ANTIALIAS removed
+    try:
+        resample = Image.Resampling.LANCZOS       # Pillow >= 10
+    except AttributeError:
+        resample = Image.LANCZOS                  # Pillow < 10
+
+    img = img.resize((width, height), resample)
+    return ImageTk.PhotoImage(img)                # <<< return PhotoImage
 
 
 class GUI(Frame):
@@ -24,32 +38,30 @@ class GUI(Frame):
         self.pack()
 
         # Label for the results of scan
-        self.resultLabel = Label(self, text="COPY MOVE DETECTOR", font = ("Courier", 50))
+        self.resultLabel = Label(self, text="COPY MOVE DETECTOR", font=("Courier", 50))
         self.resultLabel.grid(row=0, column=0, columnspan=2)
         Grid.rowconfigure(self, 0, weight=1)
 
-        # Get the blank image
+        # Get the blank image (as PhotoImage)
         blank_img = getImage("images/blank.png", IMG_WIDTH, IMG_HEIGHT)
 
         # Displays the input image
-        self.imagePanel = Label(self, image = blank_img)
-        self.imagePanel.image = blank_img
+        self.imagePanel = Label(self, image=blank_img)
+        self.imagePanel.image = blank_img              # keep reference
         self.imagePanel.grid(row=1, column=0, padx=5)
 
         # Label to display the output image
-        self.resultPanel = Label(self, image = blank_img)
-        self.resultPanel.image = blank_img
+        self.resultPanel = Label(self, image=blank_img)
+        self.resultPanel.image = blank_img             # keep reference
         self.resultPanel.grid(row=1, column=1, padx=5)
 
         # Label to display the path of the input image
-        self.fileLabel = Label(self, text="No file selected", fg="grey", font = ("Times", 15))
+        self.fileLabel = Label(self, text="No file selected", fg="grey", font=("Times", 15))
         self.fileLabel.grid(row=2, column=0, columnspan=2)
 
-
         # Progress bar
-        self.progressBar = ttk.Progressbar(self, length=500)
+        self.progressBar = ttk.Progressbar(self, length=500, mode="determinate")
         self.progressBar.grid(row=3, column=0, columnspan=2)
-
 
         # Configure the style of the buttons
         s = ttk.Style()
@@ -67,14 +79,16 @@ class GUI(Frame):
         self.quitButton = ttk.Button(self, text="Exit program", command=parent.quit)
         self.quitButton.grid(row=6, column=0, columnspan=2, sticky="e", pady=5)
 
-
     # Function to browse through the computer to upload images
     def browseFile(self):
-        # Only accept jpg and png files
-        filename = filedialog.askopenfilename(title="Select an image", filetype=[("Image file", "*.jpg *.png")])
+        # Only accept common image files
+        filename = filedialog.askopenfilename(
+            title="Select an image",
+            filetypes=[("Image files", "*.jpg *.jpeg *.png *.bmp *.tif *.tiff")]
+        )
 
         # No file selected (User closes the browsing window)
-        if filename == "":
+        if not filename:
             return
 
         self.uploaded_image = filename
@@ -82,21 +96,17 @@ class GUI(Frame):
         self.fileLabel.configure(text=filename)     # Set the path name in the fileLabel
 
         # Display the input image in imagePanel
-        img = getImage(filename, IMG_WIDTH, IMG_HEIGHT)
+        img = getImage(filename, IMG_WIDTH, IMG_HEIGHT)  # returns PhotoImage
         self.imagePanel.configure(image=img)
-        self.imagePanel.image = img
-
+        self.imagePanel.image = img                       # keep reference
 
         # Display blank image in resultPanel
         blank_img = getImage("images/blank.png", IMG_WIDTH, IMG_HEIGHT)
         self.resultPanel.configure(image=blank_img)
-        self.resultPanel.image = blank_img
-
-
+        self.resultPanel.image = blank_img                # keep reference
 
         # Reset the resultLabel
         self.resultLabel.configure(text="READY TO SCAN", foreground="black")
-
 
     # Function to run the program the copy-move detection algorithm
     def runProg(self):
@@ -108,7 +118,7 @@ class GUI(Frame):
             messagebox.showerror('Error', "Please select image")    # Show error message
             return
 
-        # Convert image into a numpy array
+        # Convert image into a numpy array (OpenCV BGR)
         img = readImage(path)
 
         # Run copy-move detection algorithm
@@ -119,10 +129,10 @@ class GUI(Frame):
 
         # If copy-move is detected
         if result:
-            # Retrieve the output image and display in resultPanel
+            # Retrieve the output image (saved as results.png) and display in resultPanel
             img = getImage("results.png", IMG_WIDTH, IMG_HEIGHT)
             self.resultPanel.configure(image=img)
-            self.resultPanel.image = img
+            self.resultPanel.image = img               # keep reference
 
             # Display results in resultLabel
             self.resultLabel.configure(text="COPY-MOVE DETECTED", foreground="red")
@@ -131,11 +141,10 @@ class GUI(Frame):
             # Retrieve the thumbs up image and display in resultPanel
             img = getImage("images/thumbs_up.png", IMG_WIDTH, IMG_HEIGHT)
             self.resultPanel.configure(image=img)
-            self.resultPanel.image = img
+            self.resultPanel.image = img               # keep reference
 
             # Display results in resultLabel
             self.resultLabel.configure(text="ORIGINAL IMAGE", foreground="green")
-
 
 
 # Main Function
@@ -143,17 +152,24 @@ def main():
     # Initialize the app window
     root = Tk()
     root.title("Copy-Move Detector")
-    root.iconbitmap('images/icon.ico')
+
+    # Icon (optional; guard in case file missing)
+    try:
+        root.iconbitmap('images/icon.ico')
+    except Exception:
+        pass
 
     # Ensure the program closes when window is closed
     root.protocol("WM_DELETE_WINDOW", root.quit)
 
-    root.state("zoomed")
+    # Maximize (Windows); if this errors on other OS, comment it
+    try:
+        root.state("zoomed")
+    except Exception:
+        pass
 
     GUI(parent=root)
-
     root.mainloop()
-
 
 
 if __name__ == "__main__":
